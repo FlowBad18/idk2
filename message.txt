@@ -1,0 +1,227 @@
+import discord
+from discord.ext import commands
+import random
+import json
+
+intents = discord.Intents.all()
+intents.typing = False
+intents.presences = False
+
+# Initialize the bot with the specified intents
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+queue = []  # List to store players in the queue
+
+# Load player points and user IDs from a JSON file or create an empty dictionary
+try:
+    with open('points.json', 'r') as points_file:
+        player_data = json.load(points_file)
+except FileNotFoundError:
+    player_data = {}
+
+# Dictionary to keep track of players and their teams
+player_teams = {}
+
+@bot.event
+async def on_ready():
+    print(f'Logged in as {bot.user.name}')
+
+@bot.command()
+async def start(ctx):
+    # Create an embed for the queue message with the image in the top right corner
+    embed = discord.Embed(
+        title="Queue System",
+        description=f"React with ⚔️ to join the queue!\nPlayers in Queue: {', '.join([str(user.mention) for user in queue])}",
+        color=discord.Color.from_rgb(43, 45, 49)  # Set the color to (43, 45, 49)
+    )
+    embed.add_field(name="\u200b", value="\u200b", inline=True)  # Add a blank field for spacing
+    embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1077430312197427261/1143336517729779712/tc_logo.png")
+    
+    message = await ctx.send(embed=embed)
+    await message.add_reaction("⚔️")
+
+@bot.event
+async def on_reaction_add(reaction, user):
+    if reaction.message.author == bot.user and user != bot.user and reaction.emoji == "⚔️":
+        if user not in queue:
+            queue.append(user)
+            await reaction.message.edit(embed=update_embed(queue))
+
+def update_embed(queue):
+    embed = discord.Embed(
+        title="Queue System",
+        description=f"React with ⚔️ to join the queue!\nPlayers in Queue: {', '.join([str(user.mention) for user in queue])}",
+        color=discord.Color.from_rgb(43, 45, 49)  # Set the color to (43, 45, 49)
+    )
+    embed.add_field(name="\u200b", value="\u200b", inline=True)  # Add a blank field for spacing
+    embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1077430312197427261/1143336517729779712/tc_logo.png")
+    return embed
+
+@bot.command()
+async def startgame(ctx, num_teams: int):
+    if len(queue) < 2:
+        await ctx.send("Not enough players to start the game.")
+        return
+
+    # Ensure that the number of teams is between 2 and 20
+    if num_teams < 2 or num_teams > 20:
+        await ctx.send("Please specify a number of teams between 2 and 20.")
+        return
+
+    # Shuffle the players in the queue
+    random.shuffle(queue)
+
+    # Distribute players into teams
+    teams = {}
+    for i in range(len(queue)):
+        player = queue[i]
+        team_number = i % num_teams  # Assign players to teams in a round-robin fashion
+        player_teams[player.id] = team_number  # Store the player's team
+        if team_number not in teams:
+            teams[team_number] = []
+        teams[team_number].append(player)
+
+    # Create an embedded message with team assignments and an image
+    embed = discord.Embed(
+        title="Team Assignments",
+        color=discord.Color.from_rgb(43, 45, 49)  # Set the color to (43, 45, 49)
+    )
+    embed.add_field(name="\u200b", value="\u200b", inline=True)  # Add a blank field for spacing
+    embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1077430312197427261/1143336517729779712/tc_logo.png")
+
+    for i, team_players in enumerate(teams.values()):
+        team_mention = " ".join([str(user.mention) for user in team_players])
+        embed.add_field(name=f"Team {i+1}", value=team_mention, inline=False)
+
+    # Clear the queue
+    queue.clear()
+
+    # Send the embedded message with team assignments and the image
+    await ctx.send(embed=embed)
+
+
+@bot.command()
+async def win(ctx, user: discord.User):
+    user_id = str(user.id)  # Use the user's ID for the database
+    if user_id in player_data:
+        player_data[user_id]['points'] += 3
+    else:
+        player_data[user_id] = {'points': 3, 'name': str(user)}  # Store points and user name
+
+    with open('points.json', 'w') as points_file:
+        json.dump(player_data, points_file)
+
+    embed = discord.Embed(
+        description=f"{user.mention} has won and gained 3 points!",
+        color=discord.Color.from_rgb(43, 45, 49)  # Set the color to (43, 45, 49)
+    )
+    embed.add_field(name="\u200b", value="\u200b", inline=True)  # Add a blank field for spacing
+    embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1077430312197427261/1143336517729779712/tc_logo.png")
+
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def lose(ctx, user: discord.User):
+    user_id = str(user.id)  # Use the user's ID for the database
+    if user_id in player_data:
+        player_data[user_id]['points'] -= 2
+    else:
+        player_data[user_id] = {'points': -2, 'name': str(user)}  # Store points and user name
+
+    with open('points.json', 'w') as points_file:
+        json.dump(player_data, points_file)
+
+    embed = discord.Embed(
+        description=f"{user.mention} has lost and lost 2 points!",
+        color=discord.Color.from_rgb(43, 45, 49)  # Set the color to (43, 45, 49)
+    )
+    embed.add_field(name="\u200b", value="\u200b", inline=True)  # Add a blank field for spacing
+    embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1077430312197427261/1143336517729779712/tc_logo.png")
+
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def leaderboard(ctx):
+    # Sort player points in descending order
+    sorted_player_points = sorted(player_data.items(), key=lambda x: x[1]['points'], reverse=True)
+    top_players = sorted_player_points[:5]  # Get the top 5 players
+
+    if not top_players:
+        await ctx.send("No points have been awarded yet.")
+        return
+
+    embed = discord.Embed(
+        title="Top Players by Points",
+        color=discord.Color.from_rgb(43, 45, 49)
+    )
+    embed.add_field(name="\u200b", value="\u200b", inline=True)  # Add a blank field for spacing
+    embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1077430312197427261/1143336517729779712/tc_logo.png")
+
+    for i, (user_id, data) in enumerate(top_players):
+        user = bot.get_user(int(user_id))
+        points = data['points']
+        if user:
+            mention_str = f"{user.name}"  # Mention the user using their username
+            embed.add_field(name=f"#{i+1} {mention_str}", value=f"Points: {points}", inline=False)
+        else:
+            # Handle the case where the user isn't found
+            embed.add_field(name=f"#{i+1} User not found", value=f"Points: {points}", inline=False)
+
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def checkpoints(ctx):
+    user_id = str(ctx.author.id)  # Use the user's ID for the database
+    if user_id in player_data:
+        points = player_data[user_id]['points']
+
+        embed = discord.Embed(
+            description=f"{ctx.author.mention}, you have {points} points.",
+            color=discord.Color.from_rgb(43, 45, 49)  # Set the color to (43, 45, 49)
+        )
+        embed.add_field(name="\u200b", value="\u200b", inline=True)  # Add a blank field for spacing
+        embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1077430312197427261/1143336517729779712/tc_logo.png")
+
+        await ctx.send(embed=embed)  # Send the message in the chat with a mention to the command issuer
+    else:
+        await ctx.send(f"{ctx.author.mention}, you have no points.")  # Send a message in the chat with a mention to the command issuer
+
+# Define a variable to keep track of the submissions
+submissions = []
+
+# Specify the limit for submissions before resetting
+SUBMISSION_LIMIT = 5
+
+# Replace 'logs_channel_id' with the actual ID of your logs channel
+logs_channel_id = 1136343936089194537
+
+@bot.command()
+async def submit(ctx, number: int):
+    if number is not None:
+        submissions.append(number)  # Store the submitted number
+        await ctx.send(f"Number {number} has been submitted by {ctx.author.mention}.")
+
+        # Check if the submission limit is reached
+        if len(submissions) == SUBMISSION_LIMIT:
+            total = sum(submissions)  # Calculate the total of submitted numbers
+            submissions.clear()  # Reset the submissions list
+
+            # Send an embedded message to the logs channel
+            logs_channel = bot.get_channel(logs_channel_id)
+
+            if logs_channel:
+                embed = discord.Embed(
+                    title="Submission",
+                    description=f"Five games have been played and the total kills are",
+                    color=discord.Color.from_rgb(43, 45, 49)
+                )
+                embed.add_field(name="Total of Submitted Kills", value=str(total), inline=False)
+                embed.add_field(name="Submitted by", value=ctx.author.mention, inline=False)
+
+                await logs_channel.send(embed=embed)
+    else:
+        await ctx.send("Please submit a valid number.")
+
+# Run the bot with your bot token
+bot.run("MTEzNjM0MzE2OTE5ODQ1Njk1NA.GPeet7.Kax_1uQ4Sh0s5LwDtDbhhx8-cpQD_Tnvxs27Hc")
+ 
